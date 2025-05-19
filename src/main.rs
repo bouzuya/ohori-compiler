@@ -1,12 +1,4 @@
-fn main() {
-    use S::I;
-
-    // 全体的に効率がひどく悪いが一旦無視する
-    let t: Tape = (vec![I, I, I], I, vec![]);
-    let (q, delta) = add_one();
-    let r = exec(&delta, &q, &t);
-    println!("t = {:?}, r = {:?}", t, r);
-}
+fn main() {}
 
 // 1.1.3
 //
@@ -34,6 +26,7 @@ fn main() {
 // TM
 
 /// 方向
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum D {
     L,
     R,
@@ -61,7 +54,7 @@ type Delta = Vec<((Q, S), (Q, S, D))>;
 type Program = (Q, Delta);
 
 /// テープ (<T>)
-type Tape = (Vec<S>, S, Vec<S>);
+type Tape = (List, S, List);
 
 fn add_one() -> Program {
     use D::L;
@@ -80,48 +73,101 @@ fn add_one() -> Program {
 
 // Eval
 
-fn hd(ss: &Vec<S>) -> S {
-    // List は先頭を操作するが、 Vec で実装しているため末尾を操作する
-    ss.last().copied().unwrap_or(S::B)
-}
+// 純粋関数型データ構造の「リスト」ではない。連結リストでもない。
+// Vec を逆順に扱って、先頭要素の追加と削除を O(1) で実現しただけのもの
+#[derive(Clone, Eq, PartialEq)]
+struct List(Vec<S>);
 
-fn tl(ss: &Vec<S>) -> Vec<S> {
-    let mut ss = ss.clone();
-    ss.pop();
-    ss
-}
+impl List {
+    fn from<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        I::IntoIter: DoubleEndedIterator<Item = S>,
+    {
+        List(iter.into_iter().rev().collect::<Vec<S>>())
+    }
 
-fn cons(s: S, ss: &Vec<S>) -> Vec<S> {
-    match (s, ss.is_empty()) {
-        (S::B, true) => return vec![],
-        (s, _) => {
-            let mut ss = ss.clone();
-            ss.push(s);
-            ss
+    fn cons(mut self, s: S) -> Self {
+        match (s, self.0.is_empty()) {
+            (S::B, true) => return self,
+            (s, _) => {
+                self.0.push(s);
+                self
+            }
         }
+    }
+
+    fn head(&self) -> S {
+        self.0.last().copied().unwrap_or(S::B)
+    }
+
+    fn tail(mut self) -> Self {
+        self.0.pop();
+        Self(self.0)
     }
 }
 
-fn move_l(tape: &Tape) -> Tape {
-    let (left, head, right) = tape;
-    (tl(&left), hd(&left), cons(*head, &right))
+impl std::fmt::Debug for List {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.0.iter().rev()).finish()
+    }
 }
 
-fn move_r(tape: &Tape) -> Tape {
+fn move_l(tape: Tape) -> Tape {
     let (left, head, right) = tape;
-    (cons(*head, &left), hd(&right), tl(&right))
+    let h = left.head();
+    (left.tail(), h, right.cons(head))
 }
 
-fn mov(d: &D, tape: &Tape) -> Tape {
+fn move_r(tape: Tape) -> Tape {
+    let (left, head, right) = tape;
+    (left.cons(head), right.head(), right.tail())
+}
+
+fn mov(d: D, tape: Tape) -> Tape {
     match d {
         D::L => move_l(tape),
         D::R => move_r(tape),
     }
 }
 
-fn exec(delta: &Delta, q: &Q, (left, head, right): &Tape) -> Tape {
-    match delta.iter().find(|(it, _)| it == &(*q, *head)) {
-        None => (left.clone(), *head, right.clone()),
-        Some((_, (q_, s, d))) => exec(delta, q_, &mov(d, &(left.clone(), *s, right.clone()))),
+fn exec(delta: &Delta, q: &Q, (left, head, right): Tape) -> Tape {
+    match delta.iter().find(|(it, _)| it == &(*q, head)) {
+        None => (left, head, right),
+        Some((_, (q_, s, d))) => exec(delta, q_, mov(*d, (left, *s, right))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list() {
+        use S::{B, I, O};
+        let l = List::from([]);
+        assert_eq!(l.head(), B);
+        assert_eq!(l.tail(), List::from([]));
+        let l = List::from([]);
+        assert_eq!(l.cons(B), List::from([]));
+        let l = List::from([I]);
+        assert_eq!(l.head(), I);
+        assert_eq!(l.tail(), List::from([]));
+        let l = List::from([I, O]);
+        assert_eq!(l.head(), I);
+        assert_eq!(l.tail(), List::from([O]));
+        let l = List::from([I, O, O]);
+        assert_eq!(l.head(), I);
+        assert_eq!(l.tail(), List::from([O, O]));
+        assert_eq!(format!("{:?}", List::from([I, O, O])), "[I, O, O]");
+    }
+
+    #[test]
+    fn test_add_one() {
+        use S::{B, I, O};
+        let t: Tape = (List::from([I, I, I]), I, List::from([]));
+        let (q, delta) = add_one();
+        let r = exec(&delta, &q, t);
+        assert_eq!(r, (List::from([]), B, List::from([I, O, O, O, O])));
     }
 }
